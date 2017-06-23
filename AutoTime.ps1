@@ -3,71 +3,63 @@
 #
 #Author: Dale Foley
 #Date: 2017/02/04
-#Description: The purpose of this script is to automate the retrieval of date and time from a NTP server 
+#Description: The purpose of this script is to automate the retrieval of date and time from a NTP server and
 #             apply it to the system date and time.
 #-------------------------------------------------------------------------------------------------------
+#Updated: 2017/06/23 11:47:00
+
+Set-StrictMode -Version 2.0
 
 #Function Definitions
-function logInformation([string]$sMsg, [string]$sLogFile)
+function logInformation([string]$msg, [string]$logFile)
 {
-	#----------------Log Location Parameters------------------
-	$sUserDirectory = $env:USERPROFILE
+	[string]$userDirectory = $env:USERPROFILE
+	[string]$logsDirectory = $userDirectory  + "\logs\AutoTime\"
 
-	$sLogLogsDir = $sUserDirectory  + "\logs"
-	$sLogAutoTimeDir = $sLogLogsDir  + "\AutoTime\"
-
-	$sLogDirPath = $sLogAutoTimeDir 
-	$sLogPath = 	$sLogDirPath + $sLogFile
-	#------------------------------------------------------------
-
-	$sTimeStamp = getDateTime
+	$timeStamp = getDateTime
 	
-	#If logs directories and file do not exist, create them.
-	if(-Not(Test-Path $sLogLogsDir)) {New-Item $sLogLogsDir -ItemType Directory}
-	if(-Not(Test-Path $sLogAutoTimeDir)) {New-Item $sLogAutoTimeDir -ItemType Directory}
-	if(-Not(Test-Path $sLogPath))  {New-Item $sLogPath -ItemType File}
+	if(-Not(Test-Path $logsDirectory)) {New-Item $logsDirectory -ItemType Directory}
 		
-	Write-Output ($sTimeStamp + $sMsg) | Out-File $sLogPath -Append
+	Write-Output ($timeStamp + $msg) | Out-File $logFile -Append
 }
 
 function startWinTime()
 {
 	try
 	{
-		logInformation "Checking if W32Time is running" $global:sLogFile
+		logInformation "Checking if W32Time is running" $global:logFile
 		if((Get-Service -Name W32Time).Status -ne 'Running')
 		{
-			logInformation "W32Time not running, attempting to start it...." $global:sLogFile
+			logInformation "W32Time not running, attempting to start it...." $global:logFile
 			Start-Service -Name W32Time
             
             if((Get-Service -Name W32Time).Status -ne 'Running')
             {
-                logInformation "Failed to start W32Time." $global:sLogFile
+                logInformation "Failed to start W32Time." $global:logFile
             }
             else
             {
-                logInformation "W32Time is now running" $global:sLogFile
+                logInformation "W32Time is now running" $global:logFile
             }
 		}
         else
         {
-            logInformation "W32Time is already running" $global:sLogFile
+            logInformation "W32Time is already running" $global:logFile
         }
 	}
 	catch
 	{
-		$sMsg = $_
-		logInformation $sMsg $sErrorLogFile
+		logInformation $msg $sErrorLogFile
 	}
 }
 
 function getDateTime()
 {
-		$sTimeStamp = '['
-		$sTimeStamp += Get-Date -Format 'yyyy-mm-dd HH:mm:ss:fffffff'
-		$sTimeStamp += ']'
+		$timeStamp = '['
+		$timeStamp += Get-Date -Format 'yyyy-mm-dd HH:mm:ss:fffffff'
+		$timeStamp += ']'
 
-		return $sTimeStamp
+		return $timeStamp
 }
 
 function getPSVersion()
@@ -79,45 +71,101 @@ function getPSVersion()
 	return $sPSVersion
 }
 
-function testNTPServer([string[]]$arr_sNTPServers)
+function testNTPServers([string[]]$arr_sNTPServers)
 {
-    logInformation "Testing NTP server availability..." $global:sLogFile
+    [string[]]$return = $null
+
+    logInformation "Testing NTP server availability..." $global:logFile
+
+    $ping = New-Object System.Net.NetworkInformation.Ping
 
     foreach($value in $arr_sNTPServers)
     {
-        if(Test-Connection -Cn $value -BufferSize 16 -Count 1 -ea 0 -Quiet)
+        $reply = $ping.Send($value, 2000)
+        
+        if($reply.Status -eq "Success")
         {
-            $sMsg = $value + " is up!"
-            logInformation $sMsg $global:sLogFile
-            $global:arr_sNTPServersAvailable += $value
+            $msg = $value + " is up!"
+            logInformation $msg $global:logFile
+            $return += $value   
         }
         else
         {
-            $sMsg = $value + " is down!"
-            logInformation $sMsg $global:sLogFile
+            $msg = $value + " is down!"
+            logInformation $msg $global:logFile
         }
-    }    
+    }
+
+    $return
 }
 
-function getTime($server)
+function getTime()
 {
-    $NTPData = New-Object byte[] 48 
-    $NTPData[0] = 27 # Request header: 00 = No Leap Warning; 011 = Version 3; 011 = Client Mode; 00011011 = 27
+    [UInt32]$Seconds = $Null
 
-    $Socket = New-Object System.Net.Sockets.Socket ('InterNetwork', 'Dgram', 'Udp')
-    $Socket.SendTimeout = 10000 #ms
-    $Socket.ReceiveTimeout = 10000 #ms
-    $Socket.Connect($server, 123)
+    foreach($ntpServer in $global:arr_sNTPServersAvailable)
+    {
+        $NTPData = New-Object byte[] 48 
+        $NTPData[0] = 27 # Request header: 00 = No Leap Warning; 011 = Version 3; 011 = Client Mode; 00011011 = 27
 
-    $Null = $Socket.Send($NTPData)
-    $Null = $Socket.Receive($NTPData)
+        $Socket = New-Object System.Net.Sockets.Socket ('InterNetwork', 'Dgram', 'Udp')
+        $Socket.SendTimeout = 10000 #ms
+        $Socket.ReceiveTimeout = 10000 #ms
+        $Socket.Connect($ntpServer, 123)
 
-    $Socket.Shutdown('Both')
-    $Socket.Close()
+        $Null = $Socket.Send($NTPData)
+        $Null = $Socket.Receive($NTPData)
 
-    $Seconds = [BitConverter]::ToUInt32( $NTPData[43..40], 0 )
+        $Socket.Shutdown('Both')
+        $Socket.Close()
 
-    return ([datetime]'1/1/1900').AddSeconds( $Seconds ).ToLocalTime()
+        $Seconds = [BitConverter]::ToUInt32( $NTPData[43..40], 0 )
+
+        if ($Seconds -gt 0)
+        {
+            break
+        }
+    }
+
+    if($Seconds -eq $Null)
+    {
+        $Seconds
+    }
+    else
+    {
+        ([datetime]'1/1/1900').AddSeconds( $Seconds ).ToLocalTime()
+    }
+}
+
+function waitForInternet([int]$Timeout, [string]$server)
+{
+    [bool]$Return = $False
+
+    $ping = New-Object System.Net.NetworkInformation.Ping
+    $reply = $Null
+    $replyStatus = $Null
+
+    $stopwatch = New-Object System.Diagnostics.Stopwatch
+    $stopwatch.Start()
+
+    do
+    {
+        if($stopwatch.ElapsedMilliseconds -gt $Timeout)
+        {
+            break
+        }
+
+        $reply = $ping.Send($server, $Timeout)
+        $replyStatus = $reply.Status
+
+    } until ($replyStatus -eq "Success")
+
+    if($replyStatus -eq "Success")
+    {
+        $Return = $True
+    }
+
+    $Return
 }
 
 try
@@ -126,7 +174,7 @@ try
 	$sPSVersion = getPSVersion
 	
 	$sStartupMessage = "Starting... PowerShell Version: " + $sPSVersion + "------------New Instance------------"
-	$global:sLogFile = "AutoTime.log"
+	$global:logFile = "AutoTime.log"
 	$global:sErrorLogFile = "Error.log"
     [string[]]$arr_sNTPServers = "0.au.pool.ntp.org",
                                  "1.au.pool.ntp.org",
@@ -134,18 +182,33 @@ try
                                  "3.au.pool.ntp.org",
                                  "ntp.internode.on.net"
     [string[]]$global:arr_sNTPServersAvailable = @()
+
+    [int]$pingWaitForInternetTimeout = 10000
+    [string]$pingWaitForInternetHost = "8.8.8.8"
 	#--------------------------------------------------------
 	
-	logInformation $sStartupMessage $global:sLogFile
+	logInformation $sStartupMessage $global:logFile
 
-	startWinTime #Start the W32Time Servive, required to perform a time sync
-    testNTPServer $arr_sNTPServers #Test an array of hostnames that belong to known NTP servers
-    $DateTime = getTime $global:arr_sNTPServersAvailable[0]
-    logInformation $DateTime $global:sLogFile
+    if(!(waitForInternet $pingWaitForInternetTimeout $pingWaitForInternetHost))
+    {
+        $msg = "Failed to get internet in the alloted time of: " + $pingWaitForInternetTimeout.ToString() + "ms"
+        logInformation $msg $global:logFile
+    }
+
+    $global:arr_sNTPServersAvailable = testNTPServers $arr_sNTPServers 
+    $DateTime = getTime
+
+    if($DateTime -eq $Null)
+    {
+        logInformation "Failed to get a time from the available NTP Servers. Exiting process..." $global:logFile
+        exit
+    }
+    
+    logInformation $DateTime $global:logFile
     Set-Date $DateTime
 }
 catch
 {
-	$sMsg = $_
-	logInformation $sMsg $sErrorLogFile    
+	$msg = $_
+	logInformation $msg $sErrorLogFile    
 }

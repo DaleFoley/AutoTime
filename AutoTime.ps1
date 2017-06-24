@@ -79,8 +79,17 @@ function testNTPServers([string[]]$arr_sNTPServers)
 
     $ping = New-Object System.Net.NetworkInformation.Ping
 
+    [string]$feedback = "Testing NTP server availability... Elapsed Time In Milliseconds: "
+    Write-Host -NoNewline $feedback
+
+    $stopwatch = New-Object System.Diagnostics.Stopwatch
+    $stopwatch.Start()
+
     foreach($value in $arr_sNTPServers)
-    {
+    {      
+        $feedback = $stopwatch.ElapsedMilliseconds.ToString()
+        Write-Host $feedback
+
         $reply = $ping.Send($value, 2000)
         
         if($reply.Status -eq "Success")
@@ -148,8 +157,14 @@ function waitForInternet([int]$Timeout, [string]$server)
     $stopwatch = New-Object System.Diagnostics.Stopwatch
     $stopwatch.Start()
 
+    [string]$feedback = "Testing for internet connectivity"
+    Write-Host $feedback
+    
     do
     {
+        $feedback = "Elapsed time: " + $stopwatch.ElapsedMilliseconds.ToString() + "ms"
+        Write-Host $feedback
+        
         if($stopwatch.ElapsedMilliseconds -gt $Timeout)
         {
             break
